@@ -103,6 +103,42 @@ python3 tools/jetson_tray.py load
 python3 tools/jetson_tray.py pause
 ```
 
+### Use Agent in a terminal
+
+Choose **Use Agent** in the tray. It needs `xterm`; the tested Jetson has it installed. It opens a terminal in this
+repository, resumes a paused service or loads an unloaded
+model, waits for the API to be ready, and gives you a `You>` prompt. The terminal shows each proposed Bash command and
+asks `Run this command? [y/N]`. Only `y` runs it. The model can use that shell to inspect files, edit code and run tests,
+including installed browser tools such as Playwright. Its answers and reported token speeds appear in the terminal.
+`/help`, `/status`, `/compact`, `/reset` and `/quit` are available. `/compact` asks the model to summarize earlier work
+when the 32K-token context starts filling; the agent also does this automatically when its message history reaches its
+size limit. A summary can omit details, so inspect files and test results again before relying on old conclusions.
+
+The same interface works without the tray:
+
+```sh
+bash tools/strata_agent.sh --workspace /path/to/project
+```
+
+The optional `--prompt 'task'` runs one prompt and exits. `--yes` skips command approval and is intended only for a
+disposable workspace you trust. A prompt is limited to 12 model turns by default; ask it to continue to keep the same
+conversation. Bash calls use a two-core CPU affinity, low priority, a 90-second timeout and a 6,000-character output
+limit. These settings can be changed with `STRATA_AGENT_CPUS`, `STRATA_AGENT_TOOL_TIMEOUT` and
+`STRATA_AGENT_MAX_TURNS`. The terminal agent leaves the service in its current state when it exits. Pause it from the
+tray if you want to free memory and close port 8080.
+
+**This is not a sandbox.** Even with a chosen workspace, an approved command can read or change other files as your
+user. Read commands before approving them, especially commands that delete files, install software, use the network
+or touch private data. Do not use `--yes` on a real project or with untrusted prompts. The tool timeout and CPU affinity
+limit normal foreground shell calls, not detached jobs or every browser subprocess.
+
+In one October 20, 2026 smoke test on the Jetson above, the agent ran with `--yes` in a disposable directory. It made
+four Bash calls over five model turns: inspected the directory, checked `apply_patch`, created `greet.sh` and
+`test_greet.sh`, then ran the tests. The shell reported `PASS` for Ada and Lin and `All tests passed`; the controller
+exited 0. Across those five turns, reported output speed was 13.1–16.9 tokens/s. This validates a small
+edit-and-test loop, not long-horizon reliability. In a separate one-turn probe, declining the default command prompt
+returned exit 126 and left `denied.txt` absent. Automatic compaction still needs a long-session evaluation.
+
 The service listens on `127.0.0.1` only. It is not the packaged Strata app, and it does not change the behavior of
 `./run-gyro-gyro-s.sh`. Do not run that script and the tray service at the same time: both would try to use port 8080
 and the same GPU memory. If the tray shows **Failed** or stays at **Starting**, open the service log and check the
@@ -197,6 +233,43 @@ targeted the implementation file when asked to create the test file. The control
 tool error. The next call corrected the path. The requested shell command then ran 11 tests; all 11 passed in 0.432 s.
 This is a pass for tool-call transport and recovery, not evidence that every proposed action is safe. Keep controller
 validation enabled.
+
+### Browser task through one Bash tool
+
+`tools/browser_bash_agent.sh` is a small local agent loop for testing browser use. It sends OpenAI-compatible tool calls
+to the running Strata server, exposes only a bounded `bash` tool, and lets the model invoke Python Playwright from that
+shell. It uses a disposable copy of `tests/browser_agent_fixture/index.html`; the repository page is never edited.
+The independent `verify.py` file checks the result in real Chromium after the model finishes.
+
+On this Jetson, install Python Playwright and an ARM64 Chromium browser first. The tested browser is Flatpak Chromium
+through `/usr/local/bin/chromium`; the harness also needs `jq`, `curl`, `timeout` and `taskset`. Run:
+
+```sh
+bash tools/browser_bash_agent.sh
+```
+
+The script prints its artifact directory under `../Strata-data/browser-runs/`. Its lifecycle code resumes a paused
+service and pauses it again on exit. This run began with the service already active and left it running. Shell commands
+use a two-core CPU affinity, a 90-second timeout and a 4,000-character output limit. Flatpak may run its browser
+processes outside that affinity. This is a supervised evaluation
+harness, **not a security sandbox** for untrusted prompts or arbitrary websites; the model can still execute shell
+code as the current user. Do not aim it at private pages or production accounts.
+
+In the October 20, 2026 run, the model used six Bash calls over six model turns. It first reproduced the bug in
+Chromium: clicking **Add entry** left the page at `0 entries` with no list item. It then changed the handler from
+`entries.concat(text)` to `entries.push(text)`. Its own Playwright script reported 17 passing checks covering add,
+count, blank input, case-insensitive filter, clear and another add. The separate acceptance test also passed and saved
+a screenshot. Output speed on those six turns was 13.1–16.7 tokens/s. These are task timings, not a controlled speed
+benchmark. The model did not follow the instruction to use `apply_patch` for edits; it used a Python file write.
+The disposable workspace kept that write out of the repository, but the result reinforces why the shell tool needs
+an external controller.
+
+Two earlier attempts failed because Flatpak Chromium cannot open the host's `/tmp` files, and because the first
+command guard rejected a valid resolved workspace path. The harness now creates workspaces under the home-directory
+model-data folder and normalizes that path before checking commands. This test shows browser-tool use on one small
+local page. Across the three attempts, swap in use rose from about 3.0 GiB to 5.8 GiB, while `free -h` showed about
+4.0 GiB available at the end. This was not a controlled memory test. It does not establish reliability on live
+websites, login flows, multi-page tasks or long autonomous runs.
 
 ## Measured speed
 

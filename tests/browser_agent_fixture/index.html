@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sensor log</title>
+  <style>
+    body { max-width: 42rem; margin: 3rem auto; font: 16px system-ui, sans-serif; }
+    input, button { font: inherit; padding: .6rem; }
+    li { margin: .5rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Sensor log</h1>
+  <p id="count">0 entries</p>
+  <form id="new-entry">
+    <label for="entry">Observation</label>
+    <input id="entry" name="entry" required>
+    <button type="submit">Add entry</button>
+  </form>
+  <label for="filter">Filter entries</label>
+  <input id="filter" type="search">
+  <button id="clear" type="button">Clear all</button>
+  <ul id="entries"></ul>
+  <script>
+    const entries = [];
+    const input = document.querySelector('#entry');
+    const filter = document.querySelector('#filter');
+    const list = document.querySelector('#entries');
+    const count = document.querySelector('#count');
+
+    function render() {
+      const visible = entries.filter(text => text.toLowerCase().includes(filter.value.toLowerCase()));
+      list.replaceChildren(...visible.map(text => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        return li;
+      }));
+      count.textContent = `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`;
+    }
+
+    document.querySelector('#new-entry').addEventListener('submit', event => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      entries.concat(text);
+      input.value = '';
+      render();
+    });
+    filter.addEventListener('input', render);
+    document.querySelector('#clear').addEventListener('click', () => {
+      entries.length = 0;
+      render();
+    });
+  </script>
+</body>
+</html>

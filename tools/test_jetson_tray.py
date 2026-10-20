@@ -81,6 +81,18 @@ class JetsonTrayTests(unittest.TestCase):
                 tray.action("load")
             request.assert_not_called()
 
+    def test_agent_terminal_uses_source_script_and_repo_workspace(self):
+        script = self.root / "tools" / "strata_agent.sh"
+        script.parent.mkdir()
+        script.write_text("#!/bin/bash\n")
+        self.assertEqual(tray.agent_terminal_command(),
+                         ["xterm", "-T", "Strata Agent", "-e", "bash", str(script),
+                          "--workspace", str(self.root)])
+
+    def test_agent_terminal_requires_script(self):
+        with self.assertRaisesRegex(RuntimeError, "agent script not found"):
+            tray.agent_terminal_command()
+
 
 if __name__ == "__main__":
     unittest.main()

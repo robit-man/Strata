@@ -214,6 +214,15 @@ def action(command: str, filename: str | None = None) -> None:
         raise ValueError("unknown action")
 
 
+def agent_terminal_command() -> list[str]:
+    """Use the same prepared model as the tray, with approval on by default."""
+    script = ROOT / "tools" / "strata_agent.sh"
+    if not script.is_file():
+        raise RuntimeError(f"agent script not found: {script}")
+    return ["xterm", "-T", "Strata Agent", "-e", "bash", str(script),
+            "--workspace", str(ROOT)]
+
+
 def tray() -> None:
     import gi
     gi.require_version("Gtk", "3.0")
@@ -235,7 +244,10 @@ def tray() -> None:
         return widget
 
     def launch(*argv: str) -> None:
-        subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            error_dialog(str(exc))
 
     def error_dialog(message: str) -> None:
         dialog = Gtk.MessageDialog(message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.CLOSE,
@@ -243,6 +255,12 @@ def tray() -> None:
         dialog.format_secondary_text(message)
         dialog.run()
         dialog.destroy()
+
+    def open_agent() -> None:
+        try:
+            launch(*agent_terminal_command())
+        except RuntimeError as exc:
+            error_dialog(str(exc))
 
     def model_details(model: dict) -> None:
         native = Path(model["native"]) if model.get("native") else None
@@ -340,6 +358,9 @@ def tray() -> None:
         menu.append(item("Open model folder", lambda *_: launch("xdg-open", str(native)),
                          enabled=bool(native and native.is_dir())))
         menu.append(item("Open Strata", lambda *_: webbrowser.open(URL), enabled=state in ("ready", "unloaded")))
+        menu.append(item("Use Agent", lambda *_: open_agent(),
+                         enabled=not busy and bool(model and model["ready"]) and
+                         state in ("ready", "unloaded", "paused", "failed", "starting")))
         menu.append(item("View live service log", lambda *_: launch("xterm", "-T", "Strata service log", "-e",
                                                                     "journalctl", "-b", "_SYSTEMD_USER_UNIT=" + UNIT,
                                                                     "-f")))

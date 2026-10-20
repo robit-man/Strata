@@ -39,6 +39,7 @@ Version 0.2.0-beta · engine 0.1.45.3
 > A 32 GB board runs the complete 125B-parameter Gyro-S quantized checkpoint with 32K context. See the
 > [Jetson guide](docs/JETSON.md) for the one-command install, optional system tray control, unified-memory settings,
 > API examples and measured results. The tray starts paused; Resume loads the model and opens the local API on port 8080.
+> **Use Agent** opens a supervised terminal that can inspect, edit and test files through one Bash tool.
 
 ## What you need
 

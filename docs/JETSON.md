@@ -59,6 +59,72 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 The same server also has Anthropic Messages at `/v1/messages` and OpenAI Responses at `/v1/responses`.
 
+## Tray control on the Jetson desktop
+
+The optional Jetson tray uses the existing source install. It needs a graphical Ubuntu session with GTK 3,
+Ayatana AppIndicator and a working `systemctl --user`. The system tray icon is the Strata mark. Install it only after
+`./setup.sh --no-start` has prepared a model:
+
+```sh
+python3 tools/jetson_tray.py install
+python3 tools/jetson_tray.py tray
+```
+
+The first command installs a user service and a tray autostart entry. It does **not** enable or start the service.
+The second command shows the indicator now; it also starts automatically at the next graphical login. The service is
+paused initially, no weights are loaded, and port 8080 stays closed. Choose **Resume service (load weights)** from the
+tray to start the server. The first load can take a minute or two. The menu shows **Starting** until the API is ready.
+Use **Open Strata** to open the local web page or connect an OpenAI-compatible client at
+`http://127.0.0.1:8080/v1`.
+
+The tray has two different ways to free memory:
+
+| Action | Weights | Port 8080 |
+| --- | --- | --- |
+| **Unload model** | released; next request can reload them | stays open |
+| **Pause service** | released; server process stops | closes |
+
+**Load model** puts the selected model back into memory while the service stays up. **Resume service** starts the
+service from a paused state and loads the weights. **Models** lists prepared `strata-*.json` run configs in this
+repository. Pause the service before choosing another model; the next Resume uses that config. A model with missing
+files is shown but cannot be selected. **Open model folder** opens the selected model's files. To download and prepare
+another model, use `./setup.sh --no-start` and refresh the tray menu. The tray does not download models itself.
+
+The indicator's **View live service log** opens a terminal with the service log. Closing the indicator does not stop
+the service; choose **Pause service** first when you want to close the API. The same controls work without a graphical
+session:
+
+```sh
+python3 tools/jetson_tray.py status
+python3 tools/jetson_tray.py models
+python3 tools/jetson_tray.py resume
+python3 tools/jetson_tray.py unload
+python3 tools/jetson_tray.py load
+python3 tools/jetson_tray.py pause
+```
+
+The service listens on `127.0.0.1` only. It is not the packaged Strata app, and it does not change the behavior of
+`./run-gyro-gyro-s.sh`. Do not run that script and the tray service at the same time: both would try to use port 8080
+and the same GPU memory. If the tray shows **Failed** or stays at **Starting**, open the service log and check the
+available memory. The tray is an opt-in JetPack/ARM64 source-install feature; an ARM64 app package is not provided.
+
+### Tray lifecycle test on this board
+
+On the Jetson AGX Orin described above, `python3 -m unittest tools/test_jetson_tray.py -v` passed seven no-GPU checks.
+The real user service was also tested on October 20, 2026:
+
+- **Resume:** the selected Gyro-S weights loaded, `/v1/status` reported `loaded: true`, and the server listened on
+  `127.0.0.1:8080`. Available memory was about 4.6 GiB after load.
+- **Chat:** a 59-token prompt asking for an exact phrase returned `tray test passed` in 21 generated tokens. That one
+  request reported 10.8 prompt tokens/s and 4.8 generated tokens/s; it is a smoke test, not a throughput benchmark.
+- **Unload:** `/v1/status` reported `loaded: false`, port 8080 stayed open, and available memory rose to about 22 GiB.
+- **Load:** `/v1/status` again reported `loaded: true`, with the port still open and about 4.7 GiB available.
+- **Pause:** the user unit became inactive, port 8080 had no listener, and available memory returned to about 22 GiB.
+
+The deployed tray is left running, but the service is paused. Clicking **Resume service (load weights)** starts it
+again. These memory figures are from `free -h` on this board at the end of each step; they are not minimum requirements
+for other Jetsons.
+
 ## Where the memory goes
 
 Jetson does not have separate system RAM and VRAM. CUDA allocations, the KV cache, mapped model pages, the Linux page

@@ -37,7 +37,8 @@ Version 0.2.0-beta · engine 0.1.45.3
 
 > **Jetson is supported from source.** Strata now builds and runs on NVIDIA Jetson AGX Orin with JetPack 6 on ARM64.
 > A 32 GB board runs the complete 125B-parameter Gyro-S quantized checkpoint with 32K context. See the
-> [Jetson guide](docs/JETSON.md) for the one-command install, unified-memory settings, API examples and measured results.
+> [Jetson guide](docs/JETSON.md) for the one-command install, optional system tray control, unified-memory settings,
+> API examples and measured results. The tray starts paused; Resume loads the model and opens the local API on port 8080.
 
 ## What you need
 

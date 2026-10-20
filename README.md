@@ -7,9 +7,9 @@
 
 <p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a></p>
 
-<h3 align="center">Run a state-of-the-art model on your own gaming PC</h3>
+<h3 align="center">Run a state-of-the-art model on your own edge compute</h3>
 
-<p align="center">Support for NVIDIA, AMD, Intel · Windows, Linux, Mac · free and open source</p>
+<p align="center">Support for NVIDIA, AMD, Intel and JetPack (ARM64) · Windows, Linux, Mac · free and open source</p>
 
 <p align="center">
   <a href="https://github.com/Niko1221/Strata/releases"><img src="https://img.shields.io/github/v/release/Niko1221/Strata?include_prereleases&label=release" alt="Latest release"></a>
@@ -27,13 +27,17 @@ agents. Your chats and files stay on your PC.
 
 **New here?** Check [what you need](#what-you-need), then [install the app](#option-a-the-strata-app).
 
-- **Runs on a gaming PC.** 32 GB of RAM and graphics memory together is enough to start.
+- **Runs on your own edge compute.** 32 GB of RAM and graphics memory together is enough to start.
 - **Works with your tools.** It speaks the OpenAI and Anthropic APIs, so Claude Code, Codex CLI, OpenCode and other agents connect to it.
 - **Reads pictures.** They are on by default.
 - **Free.** MIT license, no account, no cloud.
 - **Private.** No telemetry. What Strata downloads, when it uses the internet and how it checks downloads is in [docs/SAFETY.md](docs/SAFETY.md).
 
 Version 0.2.0-beta · engine 0.1.45.3
+
+> **Jetson is supported from source.** Strata now builds and runs on NVIDIA Jetson AGX Orin with JetPack 6 on ARM64.
+> A 32 GB board runs the complete 125B-parameter Gyro-S quantized checkpoint with 32K context. See the
+> [Jetson guide](docs/JETSON.md) for the one-command install, unified-memory settings, API examples and measured results.
 
 ## What you need
 
@@ -50,6 +54,7 @@ memory. More memory gives a bigger model or a faster one.
 | **Intel** Arc | [Intel Arc](docs/INTEL_ARC.md), [Intel engine](docs/INTEL.md) |
 | **Apple Silicon Mac** (M1 or newer, macOS 15 or newer) | [Mac](docs/MAC.md) |
 | **AMD Ryzen AI Max (Strix Halo)** and other unified-memory systems | [Strix Halo](docs/STRIX_HALO.md) |
+| **NVIDIA Jetson AGX Orin** (JetPack 6, ARM64, 32 GB unified memory or more) | Build from source. See [Jetson and JetPack](docs/JETSON.md). |
 | Older cards and processors | [Older GPUs](docs/OLDER_GPUS.md), [Older CPUs](docs/INSTALL.md#older-cpus-experimental) |
 
 Also needed:
@@ -302,6 +307,11 @@ The installer finds your card and sets up the right engine. It asks which model 
 the model keeps in mind) and whether it should read pictures. Press Enter for the recommended answer. Then it downloads the
 model (about 70 GB) and starts it. If the download stops, run it again and it continues. Your browser opens the Strata
 page at `http://127.0.0.1:8080`.
+
+**Jetson AGX Orin (JetPack 6, ARM64):** use `./setup.sh`; there is no ready-made ARM64 app or Terminal engine yet.
+The source installer builds for the JetPack CUDA toolkit, limits the build to two jobs and keeps 6 GB of unified memory
+outside the CUDA expert cache. Start with Gyro-S and 32K context on a 32 GB board. The exact commands, memory layout,
+tool-calling test and measured tokens per second are in [the Jetson guide](docs/JETSON.md).
 
 > While the model starts, your PC can be slow or stop responding for 1-3 minutes (longest the first time). Strata loads
 > 35-55 GB into your RAM and locks part of it for the graphics card. Wait, and don't close the window.

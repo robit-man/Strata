@@ -1105,6 +1105,7 @@ POOL_WORKERS_CAP = 32
 POOL_RESERVE_FROM = 16
 POOL_RESERVE = 1
 VISION_THREADS_CAP = 16
+JETSON_UMA_RESERVE_MIB = 6144       # shared RAM left outside CUDA for the OS, mapped expert pages and prompt work
 
 
 def plan_pool_workers(logical: int, cores_per_package=None, quota: float = 0.0, hybrid=None) -> int:
@@ -2696,6 +2697,19 @@ def uma_expert_cache(model, ram, budget_gib, kv_ram_gb=0.0):
     room = ram - UNSLOTH_RAM_LEFT_GB - budget_gib - math.ceil(kv_ram_gb)
     slots = min(UMA_EXPERTS, int(room / slot_gib))
     return slots if slots >= 256 else None
+
+
+def jetson_memory_reserve(args: list, gpu: dict, asked) -> list:
+    """Keep shared RAM outside CUDA's expert cache on Jetson unless the user chose a reserve explicitly."""
+    if not gpu.get("jetson") or asked is not None:
+        return args
+    result = list(args)
+    if "--vram-reserve-mib" in result[:-1]:
+        i = result.index("--vram-reserve-mib") + 1
+        result[i] = str(max(int(result[i]), JETSON_UMA_RESERVE_MIB))
+    else:
+        result += ["--vram-reserve-mib", str(JETSON_UMA_RESERVE_MIB)]
+    return result
 
 
 def budget_choice(model, ram, asked) -> float:
@@ -4825,6 +4839,17 @@ def install_build_tools(gpu, yes):
     return nvcc, find_vcvars(cuda_v) if WIN else None
 
 
+def cmake_build_jobs(cpu_count=None, requested=None, jetson=None) -> int:
+    """A bounded Ninja job count.  Jetson shares RAM and power between the CPU and GPU, so leave the board usable."""
+    count = os.cpu_count() if cpu_count is None else cpu_count
+    value = os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL") if requested is None else requested
+    jobs = max(2, (count or 4) // 2)
+    if value and str(value).isdigit() and int(value) > 0:
+        jobs = int(value)
+    on_jetson = Path("/etc/nv_tegra_release").is_file() if jetson is None else jetson
+    return min(jobs, 2) if on_jetson else jobs
+
+
 def cmake_build(src, bdir, target, defs, vcvars, bat_name):
     acquisition.require("a compile (cmake)")
     # The ready-made engine path never calls this function. Keep build helpers out of
@@ -4840,7 +4865,7 @@ def cmake_build(src, bdir, target, defs, vcvars, bat_name):
         fail("cmake / ninja not found after installing them", "run: .venv python -m pip install -r requirements-build.txt")
     conf = [cmake, "-G", "Ninja", f"-DCMAKE_MAKE_PROGRAM={ninja}", "-S", str(src), "-B", str(bdir),
             "-DCMAKE_BUILD_TYPE=Release", *defs]
-    build = [cmake, "--build", str(bdir), "--target", target, "-j", str(max(2, (os.cpu_count() or 4) // 2))]
+    build = [cmake, "--build", str(bdir), "--target", target, "-j", str(cmake_build_jobs())]
     # A failed build is tried once more: CUDA 13.0's ptxas now and then fails to parse a PTX file it just wrote, and
     # the same command then gets past it (issue #45); a second attempt only compiles what is still missing.
     if WIN:
@@ -8158,6 +8183,13 @@ def main() -> int:
             # a tip only (recommend, never force): on a 12 GB card the encoder's 700 MiB can leave ~200 MiB free
             print(f"  tip: images on a {gpu['vram_gb']:.0f} GB card can leave little VRAM free; if a request stalls, "
                   f"run setup again with --vram-reserve-mib {VISION_GPU_SMALL_RESERVE_MIB}")
+    if gpu.get("jetson") and a.vram_reserve_mib is None:
+        # CUDA allocations and the page cache draw from the same physical RAM on Jetson.  `auto` otherwise leaves only
+        # the discrete-GPU reserve and fills nearly all RAM with hot experts, pushing the active prompt/file working
+        # set into swap.  Keep a host-side floor; an explicit user value below overrides it in the branch after this.
+        args = jetson_memory_reserve(args, gpu, a.vram_reserve_mib)
+        ok(f"Jetson unified memory: {JETSON_UMA_RESERVE_MIB} MiB kept outside the CUDA expert cache for the OS, "
+           "mapped expert pages and prompt work (--vram-reserve-mib)")
     if a.vram_reserve_mib is not None:                 # #493: VRAM left free for other programs (only when given)
         if "--vram-reserve-mib" in args:
             i = args.index("--vram-reserve-mib") + 1

@@ -29,6 +29,22 @@ class JetsonDetection(unittest.TestCase):
         with mock.patch.object(setup.platform, "machine", return_value="aarch64"):
             self.assertEqual(setup.two_socket_note((3, 4)), [])
 
+    def test_shared_memory_reserve_is_large_enough_for_host_work(self):
+        self.assertEqual(setup.JETSON_UMA_RESERVE_MIB, 6144)
+        gpu = {"jetson": True}
+        self.assertEqual(setup.jetson_memory_reserve(["--expert-cache", "auto"], gpu, None),
+                         ["--expert-cache", "auto", "--vram-reserve-mib", "6144"])
+        self.assertEqual(setup.jetson_memory_reserve(["--vram-reserve-mib", "1536"], gpu, None),
+                         ["--vram-reserve-mib", "6144"])
+        self.assertEqual(setup.jetson_memory_reserve(["--vram-reserve-mib", "1024"], gpu, 1024),
+                         ["--vram-reserve-mib", "1024"])
+
+    def test_source_build_leaves_cpu_headroom(self):
+        self.assertEqual(setup.cmake_build_jobs(cpu_count=12, requested=None, jetson=True), 2)
+        self.assertEqual(setup.cmake_build_jobs(cpu_count=12, requested="1", jetson=True), 1)
+        self.assertEqual(setup.cmake_build_jobs(cpu_count=12, requested="4", jetson=True), 2)
+        self.assertEqual(setup.cmake_build_jobs(cpu_count=12, requested=None, jetson=False), 6)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 # Installing Strata
 
 Everything about installing, starting, updating and configuring Strata, on Windows, Linux and Mac, with an NVIDIA
-or an AMD graphics card or an Apple Silicon Mac. The short version is in the [README](../README.md#install). An AI
+or an AMD graphics card, an NVIDIA Jetson, or an Apple Silicon Mac. The short version is in the [README](../README.md#install). An AI
 coding assistant can do all of this for you with [AI_SETUP.md](AI_SETUP.md).
 
 There are three ways to install it. Take the first one unless you have a reason not to:
@@ -12,7 +12,7 @@ There are three ways to install it. Take the first one unless you have a reason 
    fetches the engine itself.
 
 > **On this page:** [What you need](#what-you-need) · [The app](#the-app) · [The Terminal](#the-terminal) ·
-> [From source: Windows](#from-source-windows) · [Linux](#from-source-linux) · [Mac](#from-source-mac) ·
+> [From source: Windows](#from-source-windows) · [Linux](#from-source-linux) · [Jetson](JETSON.md) · [Mac](#from-source-mac) ·
 > [AMD cards](#amd-cards) · [Several cards](#two-or-three-cards) · [Docker](#docker-linux) ·
 > [Older CPUs](#older-cpus-experimental) · [Updating](#updating) · [Where things are stored](#where-things-are-stored) ·
 > [Setup's questions](#setups-questions) · [Tuning](#tuning-for-your-pc) · [All options](#options-without-questions)
@@ -21,12 +21,12 @@ There are three ways to install it. Take the first one unless you have a reason 
 
 | | |
 | --- | --- |
-| **GPU** | **NVIDIA** RTX 20, 30, 40 or 50 series, **12 GB VRAM or more** (8 GB runs, slowly). Measured on an RTX 5070 and an RTX 3090; RTX 20 (Turing, since 0.1.27) was tested by a contributor on an RTX 2070. **AMD** Radeon RX 7900 XT / XTX, RX 9070 / 9070 XT and Radeon AI PRO R9700 (validated), RX 7800 XT / 7700 XT and RX 9060 XT (validated by their owners), RX 6800 / 6900 series (community-reported), with 12 GB of VRAM or more. See [AMD cards](#amd-cards). |
+| **GPU** | **NVIDIA** RTX 20, 30, 40 or 50 series, **12 GB VRAM or more** (8 GB runs, slowly), or **Jetson AGX Orin with 32 GB unified memory** ([Jetson and JetPack](JETSON.md)). Measured on an RTX 5070, an RTX 3090 and a Jetson AGX Orin 32 GB; RTX 20 (Turing, since 0.1.27) was tested by a contributor on an RTX 2070. **AMD** Radeon RX 7900 XT / XTX, RX 9070 / 9070 XT and Radeon AI PRO R9700 (validated), RX 7800 XT / 7700 XT and RX 9060 XT (validated by their owners), RX 6800 / 6900 series (community-reported), with 12 GB of VRAM or more. See [AMD cards](#amd-cards). |
 | **RAM** | Enough for the size you pick ([which model](MODELS.md#pick-by-memory)); **64 GB** runs every size. A big GPU makes up for less RAM - the [low-RAM mode](MODELS.md#a-big-graphics-card-and-little-ram). |
-| **CPU** | x86-64 with AVX2 (any Intel/AMD desktop CPU from the last ~8 years). AVX-512 (Ryzen 7000/9000) is a bit faster. Older CPUs without AVX2 are experimental and slow: [Older CPUs](#older-cpus-experimental). |
+| **CPU** | x86-64 with AVX2 (any Intel/AMD desktop CPU from the last ~8 years), Apple Silicon, or ARM64 on Jetson. AVX-512 (Ryzen 7000/9000) is a bit faster. Older x86 CPUs without AVX2 are experimental and slow: [Older CPUs](#older-cpus-experimental). |
 | **Disk** | The app and its engine take about 1-3 GB. ~70-80 GB free for the model, ~6 GB for the MTP layer (+1 GB with images). Q2_0 on an AVX-512 CPU also writes a one-time ~40 GB copy of its experts for the fast CPU kernel. On Linux with an AMD card, ROCm takes ~10 GB more when setup installs it. An NVMe SSD is strongly recommended: it makes the first start much faster. |
-| **OS** | Windows 10/11, Linux (Ubuntu 22.04/24.04 and Debian 12/13 get everything installed automatically; the app also runs on Fedora 44), or a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer ([Mac](MAC.md)). |
-| **Driver** | **NVIDIA:** a current driver, version 580 or newer ([nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA App). **AMD:** on Linux the kernel's amdgpu driver (no ROCm install needed); on Windows a current AMD Software: Adrenalin Edition driver ([amd.com/support](https://www.amd.com/en/support)). |
+| **OS** | Windows 10/11, Linux (Ubuntu 22.04/24.04 and Debian 12/13 get everything installed automatically; the app also runs on Fedora 44), JetPack 6 / Jetson Linux on ARM64, or a Mac with Apple Silicon (M1 or newer) and macOS 15 or newer ([Mac](MAC.md)). |
+| **Driver** | **NVIDIA desktop:** a current driver, version 580 or newer ([nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA App). **Jetson:** use the driver and CUDA toolkit supplied by JetPack 6. **AMD:** on Linux the kernel's amdgpu driver (no ROCm install needed); on Windows a current AMD Software: Adrenalin Edition driver ([amd.com/support](https://www.amd.com/en/support)). |
 
 The driver is the only thing you install yourself. With the app, the engine is inside the installer. With the
 Terminal, `strata launch` fetches the engine for your card from the signed update feed, and nothing is compiled.

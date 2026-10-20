@@ -2,7 +2,7 @@
 
 This page is written for an AI coding assistant (Claude Code, Cursor, Codex, GitHub Copilot, ...) that a user asked to
 set up Strata on their PC. Strata runs the Qwen3.8-Flash-Next model locally on one NVIDIA or AMD graphics card plus
-system RAM (or on an Apple Silicon Mac), and serves an OpenAI- and Anthropic-compatible API on `http://127.0.0.1:8080`.
+system RAM, on an NVIDIA Jetson, or on an Apple Silicon Mac. It serves an OpenAI- and Anthropic-compatible API on `http://127.0.0.1:8080`.
 The human-oriented version of everything below is [INSTALL.md](INSTALL.md).
 
 You use the **Terminal**: the `strata` command. Install it with one line, then `strata launch` downloads the engine
@@ -10,6 +10,9 @@ for the card and the model, and starts the server. If the Terminal cannot run on
 from source.
 
 Work through the steps in order. Tell the user what you are doing in plain words; they may not be technical.
+
+**Jetson:** if `/etc/nv_tegra_release` exists, do not install the release Terminal. It has no Linux ARM64 engine yet.
+Go directly to [step 9](#9-if-the-terminal-cannot-run-install-from-source) and use the Jetson command there.
 
 ## 0. Ground rules
 
@@ -31,19 +34,19 @@ Work through the steps in order. Tell the user what you are doing in plain words
 
 Requirements (details: [INSTALL.md](INSTALL.md#what-you-need)):
 
-- **GPU:** NVIDIA RTX 20, 30, 40 or 50 series, or AMD Radeon RX 7900 XT / XTX, RX 7800 XT / 7700 XT, RX 9060 XT,
+- **GPU:** NVIDIA RTX 20, 30, 40 or 50 series, NVIDIA Jetson AGX Orin with 32 GB unified memory, or AMD Radeon RX 7900 XT / XTX, RX 7800 XT / 7700 XT, RX 9060 XT,
   RX 9070 / 9070 XT, Radeon AI PRO R9700, RX 6800 / 6900 series; 12 GB of VRAM or more (an NVIDIA card with 8 GB runs,
   slowly). GTX 10 series and older, and integrated GPUs, are not supported; Pascal / Volta cards (P40, V100) and some
   older AMD cards have experimental paths the user opts into ([OLDER_GPUS.md](OLDER_GPUS.md)). A **Mac** needs Apple
   Silicon (M1 or newer), macOS 15 or newer and 16 GB of memory or more ([MAC.md](MAC.md)).
-- **Driver:** NVIDIA 580 or newer. AMD on Linux: the kernel's amdgpu driver; on Windows: a current AMD Adrenalin
+- **Driver:** NVIDIA desktop 580 or newer. Jetson uses the driver and CUDA toolkit from JetPack 6. AMD on Linux: the kernel's amdgpu driver; on Windows: a current AMD Adrenalin
   driver. If the driver is missing or too old, tell the user to update it (NVIDIA App / nvidia.com/drivers, or AMD
   Software) and restart; do not install drivers yourself unless they ask.
-- **RAM:** 32 GB or more (see step 3). **Disk:** ~80 GB free, ideally on an NVMe SSD. **CPU:** x86-64 with AVX2.
+- **RAM:** 32 GB or more (see step 3). **Disk:** ~80 GB free, ideally on an NVMe SSD (use at least 100 GB free for Jetson). **CPU:** x86-64 with AVX2, Apple Silicon, or ARM64 on Jetson.
   Without AVX2 (Xeon E5 v1/v2 and older) the ready-made engine refuses to start; the route from source builds an
   experimental and slow engine on the PC (10-20 minutes): tell the user that before starting
   ([INSTALL.md](INSTALL.md#older-cpus-experimental)).
-- **OS:** Windows 10/11, Linux x86-64 (Ubuntu 22.04/24.04 and Debian 12/13 are fully automatic), or macOS on Apple Silicon.
+- **OS:** Windows 10/11, Linux x86-64 (Ubuntu 22.04/24.04 and Debian 12/13 are fully automatic), JetPack 6 on ARM64, or macOS on Apple Silicon.
 
 To check by hand:
 
@@ -216,6 +219,16 @@ The model is picked as in step 3, with setup's flag names (`--family qwen|swift|
 Windows:  START-HERE.bat --yes --family qwen --model IQ2_XS --vision yes --no-start
 Linux:    ./setup.sh --yes --family qwen --model IQ2_XS --vision yes --no-start
 ```
+
+On a Jetson AGX Orin 32 GB, use the measured low-memory configuration. Setup builds for JetPack CUDA, limits the
+compile to two jobs and keeps 6 GB of unified memory outside the CUDA expert cache:
+
+```sh
+CMAKE_BUILD_PARALLEL_LEVEL=2 ./setup.sh --yes --family gyro --model Gyro-S \
+  --vision no --context 32768 --no-start
+```
+
+See [JETSON.md](JETSON.md) for the memory layout, measured speed and validation limits.
 
 The flags (all of them: `START-HERE.bat --help`):
 

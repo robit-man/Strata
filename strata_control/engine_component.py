@@ -578,7 +578,8 @@ def nvidia_driver_version() -> str | None:
     versions = _smi_query("driver_version")
     if not versions:                      # Linux without nvidia-smi (Fedora: it is in xorg-x11-drv-nvidia-cuda): the kernel module says
         try:
-            found = re.search(r"Kernel Module\s+(\d+(?:\.\d+)+)", Path("/proc/driver/nvidia/version").read_text())
+            found = re.search(r"(?:Kernel Module[^\n]*?|aarch64\s+)(\d+(?:\.\d+)+)",
+                              Path("/proc/driver/nvidia/version").read_text())
             versions = [found.group(1)] if found else []
         except OSError:
             versions = []

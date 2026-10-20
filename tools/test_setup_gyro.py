@@ -17,6 +17,12 @@ def hardware(ram, vram):
 
 
 class GyroCatalog(unittest.TestCase):
+    def test_low_ram_expert_pack_keeps_the_format_compatibility_flag(self):
+        command = setup.iq_pack_command(pathlib.Path("model.gguf"), pathlib.Path("pack"),
+                                        setup.FAMILIES["gyro"], experts=True)
+        self.assertIn("--compat-bf16", command)
+        self.assertEqual(command[-1], "--experts-bin")
+
     def test_the_two_sizes_and_their_numbers(self):
         self.assertEqual(setup.FAMILIES["gyro"]["file"].format(q="Gyro-S"), "Qwen3.8-Flash-Next-Gyro-S.gguf")
         for model, name, download, memory in (("Gyro-S", "Qwen3.8-Flash-Next-Gyro-S-TQ1_0.gguf", 58.5, 27.6),

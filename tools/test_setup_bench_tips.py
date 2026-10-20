@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -88,7 +89,8 @@ class Sockets(unittest.TestCase):
             self.assertIsNone(setup.linux_sockets(d))
 
     def test_two_socket_tip(self):
-        t = setup.two_socket_note((2, 18))
+        with mock.patch.object(setup.platform, "machine", return_value="x86_64"):
+            t = setup.two_socket_note((2, 18))
         self.assertEqual(len(t), 1)
         self.assertIn("--pool-workers 17", t[0])
         self.assertEqual(setup.two_socket_note((1, 18)), [])

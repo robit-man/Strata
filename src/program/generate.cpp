@@ -3240,6 +3240,10 @@ int main(int argc, char** argv) {
     strata::metal_engine::set_model_shard(o.native_preset.c_str());   // the decode window reads the model GGUF itself
     o.mmap_experts = true;   // ... experts included: no resident copy of them (the GGUF shards in place)
     if (false) {
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    // ARM64 builds use the portable/NEON expert implementations selected by strata_kernels_cpu.  AVX is an x86
+    // capability and must not be used as a launch requirement on Jetson.
+    if (false) {
 #else
     if (!strata::kernels::cpu::cpu_avx2_ok() && isa_floor[0] == '\0') {
 #endif

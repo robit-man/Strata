@@ -362,8 +362,9 @@ class Requirements(unittest.TestCase):
         requests = []
         commands = []
 
-        def find_tool(name):
+        def find_tool(name, minimum=None):
             if name == "cmake":
+                self.assertEqual(minimum, (3, 24))
                 return "/usr/bin/cmake"
             return "/venv/bin/ninja" if installed else None
 
@@ -384,6 +385,34 @@ class Requirements(unittest.TestCase):
         self.assertEqual(requests, [(["ninja==1.13.2"], "CMake and Ninja build tools")])
         self.assertEqual(commands[0][:4], ["/usr/bin/cmake", "-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=/venv/bin/ninja"])
         self.assertEqual(commands[1][:3], ["/usr/bin/cmake", "--build", str(ROOT / "build-test")])
+
+    def test_local_build_replaces_an_old_system_cmake(self):
+        installed = False
+        requests = []
+        commands = []
+
+        def find_tool(name, minimum=None):
+            if name == "cmake":
+                return "/venv/bin/cmake" if installed else None
+            return "/usr/bin/ninja"
+
+        def pip_install(packages, what):
+            nonlocal installed
+            requests.append((packages, what))
+            installed = True
+
+        def run(command, **kwargs):
+            commands.append(command)
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(setup, "WIN", False), \
+                mock.patch.object(setup, "find_tool", side_effect=find_tool), \
+                mock.patch.object(setup, "pip_install", side_effect=pip_install), \
+                mock.patch.object(setup, "run", side_effect=run):
+            setup.cmake_build(ROOT, ROOT / "build-test", "strata", [], None, "unused.bat")
+        self.assertEqual(requests, [(["cmake==4.4.3"], "CMake and Ninja build tools")])
+        self.assertEqual(commands[0][0], "/venv/bin/cmake")
+        self.assertEqual(commands[1][0], "/venv/bin/cmake")
 
     def pip(self, stamp, packages, installed=()):
         ran = []

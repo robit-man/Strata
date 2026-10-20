@@ -10,7 +10,7 @@
 #if defined(_MSC_VER)
 #include <intrin.h>
 #include <immintrin.h>
-#else
+#elif defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
 #endif
 #include <fstream>
@@ -22,6 +22,38 @@ ExpertLayout g_layout;
 }
 
 const ExpertLayout& expert_layout() { return g_layout; }
+
+#if !defined(_MSC_VER) && !defined(__x86_64__) && !defined(__i386__)
+
+int cpu_isa_cap() { return 0; }
+bool cpu_avx512_ok() { return false; }
+bool cpu_avx512bw_ok() { return false; }
+bool cpu_avx2_ok() { return false; }
+bool cpu_avx1_ok() { return false; }
+bool cpu_sse42_ok() { return false; }
+const char* isa_floor_build() { return ""; }
+int iq256_gather_setting() {
+    const char* v = std::getenv("STRATA_IQ256_GATHER");
+    return v == nullptr || v[0] == '\0' ? -1 : (std::atoi(v) != 0 ? 1 : 0);
+}
+bool cpu_gather_fast() { return false; }
+bool cpu_gather_fast_here() { return false; }
+bool cpu_avxvnni_ok() { return false; }
+std::string cpu_name() {
+    std::ifstream in("/proc/cpuinfo");
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        const std::string key = line.substr(0, colon);
+        if (key.find("model name") == std::string::npos && key.find("Processor") == std::string::npos) continue;
+        const size_t first = line.find_first_not_of(" \t", colon + 1);
+        if (first != std::string::npos) return line.substr(first);
+    }
+    return "ARM";
+}
+
+#else
 
 int cpu_isa_cap() {
     // STRATA_FORCE_ISA (tests, the experimental older-CPU builds): the engine's own dispatch acts as if this CPU
@@ -296,6 +328,8 @@ std::string cpu_name() {
     return b0 == std::string::npos ? std::string("unknown") : name.substr(b0, b1 - b0 + 1);
 }
 
+#endif
+
 // ---- the AVX-512 probe and the oracle flag (#795) ----
 //
 // expert.cpp and iq_avx512.cpp are compiled for AVX-512, and a TU compiled that way may use AVX-512 in ANY of its
@@ -322,6 +356,7 @@ const char* CpuFeatures::reason() const {
 
 CpuFeatures cpu_features() {
     CpuFeatures f;
+#if defined(_MSC_VER) || defined(__x86_64__) || defined(__i386__)
     int reg[4] = {0, 0, 0, 0};
 #if defined(_MSC_VER)
     __cpuid(reg, 0);
@@ -340,10 +375,15 @@ CpuFeatures cpu_features() {
     f.avx512vl = (ebx >> 31) & 1u;
     f.avx512_vnni = (ecx >> 11) & 1u;
     f.avx512_vbmi = (ecx >> 1) & 1u;
+#endif
     return f;
 }
 
 void cpu_require_expert_support() {
+#if !defined(_MSC_VER) && !defined(__x86_64__) && !defined(__i386__)
+    // Non-x86 builds use the portable Q2_0 path or ggml-cpu's native ARM kernels.
+    return;
+#else
     const CpuFeatures f = cpu_features();
     if (f.usable()) return;
     std::fprintf(stderr,
@@ -352,26 +392,39 @@ void cpu_require_expert_support() {
                  "        The scalar fallback exists for tests only and is far too slow to decode with.\n",
                  f.reason());
     std::exit(1);
+#endif
 }
 
 void q2_rows_any(const uint8_t* w, size_t row_bytes, int nblocks, const ActQ* const* a, int nt, float* const* out,
                  int r0, int r1) {
+#if !defined(_MSC_VER) && !defined(__x86_64__) && !defined(__i386__)
+    q2_0_gguf_rows_multi(w, row_bytes, nblocks, a, nt, out, r0, r1);
+#else
     if (cpu_avx512_ok()) q2_0_gguf_rows_multi(w, row_bytes, nblocks, a, nt, out, r0, r1);
     else if (cpu_avx2_ok()) q2_0_gguf_rows_multi_avx2(w, row_bytes, nblocks, a, nt, out, r0, r1);
     else q2_0_gguf_rows_multi_avx1(w, row_bytes, nblocks, a, nt, out, r0, r1);   // issue #1699: the third rung
+#endif
 }
 
 void q2_rows_any_legacy(const uint8_t* w, size_t row_bytes, int nblocks, const ActQ* const* a, int nt, float* const* out,
                         int r0, int r1) {
+#if !defined(_MSC_VER) && !defined(__x86_64__) && !defined(__i386__)
+    q2_0_gguf_rows_multi(w, row_bytes, nblocks, a, nt, out, r0, r1);
+#else
     if (cpu_avx512_ok()) q2_0_gguf_rows_multi(w, row_bytes, nblocks, a, nt, out, r0, r1);
     else if (cpu_avx2_ok()) q2_0_gguf_rows_multi_avx2_legacy(w, row_bytes, nblocks, a, nt, out, r0, r1);
     else q2_0_gguf_rows_multi_avx1_legacy(w, row_bytes, nblocks, a, nt, out, r0, r1);
+#endif
 }
 
 void act_quant_any(const float* x, int n, ActQ& a) {
+#if !defined(_MSC_VER) && !defined(__x86_64__) && !defined(__i386__)
+    act_quant_q8_1(x, n, a);
+#else
     if (cpu_avx512_ok()) act_quant_q8_1(x, n, a);
     else if (cpu_avx2_ok()) act_quant_q8_1_avx2(x, n, a);
     else act_quant_q8_1_avx1(x, n, a);   // issue #1699
+#endif
 }
 
 #if !defined(STRATA_NATIVE_EXPERTS)

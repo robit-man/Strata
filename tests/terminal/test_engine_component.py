@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from strata_cli import cli
-from strata_control import acquisition, components, engine_component as ec
+from strata_control import acquisition, components, engine_component as ec, targets
 
 WINDOWS = os.name == "nt"
 HERE = components.host_platform()
@@ -117,9 +117,9 @@ class Resolution(unittest.TestCase):
         self.assertIn(f"is for {other}", str(caught.exception))
 
     def test_another_backend_is_refused_with_the_reason(self):
-        make_package(self.root, backend="hip")
+        make_package(self.root, backend="hip", platform="linux-x86_64")
         with self.assertRaises(ec.EngineMissing) as caught:
-            ec.resolve(self.root, backend="cuda")
+            ec.resolve(self.root, backend="cuda", target="linux-x86_64")
         self.assertIn("is a hip engine, this PC needs cuda", str(caught.exception))
 
     def test_an_unqualified_combination_is_not_attempted(self):
@@ -129,6 +129,9 @@ class Resolution(unittest.TestCase):
         with self.assertRaises(ec.EngineMissing) as caught:
             ec.resolve(self.root, backend="metal", target=HERE)
         self.assertIn("not a supported combination", str(caught.exception))
+
+    def test_cuda_is_qualified_on_linux_arm64(self):
+        self.assertEqual(targets.backend_supported("cuda", "linux-arm64"), (True, ""))
 
     def test_runtime_too_old_is_refused(self):
         make_package(self.root, min_runtime="0.2.0")
@@ -300,10 +303,12 @@ class WrongCardFamily(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.root = Path(self.dir.name)
         self.addCleanup(self.dir.cleanup)
-        self.folder = make_package(self.root, backend="hip", archs=("gfx1200", "gfx1201"))
+        self.folder = make_package(self.root, platform="linux-x86_64", backend="hip",
+                                   archs=("gfx1200", "gfx1201"))
 
     def test_an_rx7000_card_with_the_rx9000_build_is_told_to_ask_for_the_other_build(self):
-        with mock.patch.object(ec, "hip_archs_present", return_value=["gfx1100"]):
+        with mock.patch.object(ec, "hip_archs_present", return_value=["gfx1100"]), \
+                mock.patch.object(ec, "host_platform", return_value="linux-x86_64"):
             with self.assertRaises(ec.EngineMissing) as caught:
                 ec.resolve(self.root, backend="hip", runtime="1")
             note = ec.status(self.root, backend="hip")["notice"]
@@ -313,7 +318,8 @@ class WrongCardFamily(unittest.TestCase):
         self.assertNotIn("component", note)
 
     def test_the_matching_family_is_not_blocked(self):
-        with mock.patch.object(ec, "hip_archs_present", return_value=["gfx1201"]):
+        with mock.patch.object(ec, "hip_archs_present", return_value=["gfx1201"]), \
+                mock.patch.object(ec, "host_platform", return_value="linux-x86_64"):
             self.assertEqual(ec.resolve(self.root, backend="hip", runtime="1").backend, "hip")
 
 

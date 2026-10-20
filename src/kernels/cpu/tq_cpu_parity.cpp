@@ -534,8 +534,8 @@ int bench(bool quick, const std::string& only) {
 int main(int argc, char** argv) {
     ggml_cpu_init();
     if (GGML_TYPE_COUNT <= 146) {
-        std::fprintf(stderr, "this ggml has no trellis types (build with STRATA_GGML_DIR = the agention llama.cpp fork)\n");
-        return 1;
+        std::fprintf(stderr, "this ggml has no trellis types (build with STRATA_GGML_DIR = the agention llama.cpp fork): SKIPPED\n");
+        return 77;
     }
     if (argc >= 2 && std::strcmp(argv[1], "--bench") == 0) {   // --bench [--quick] [--only <kernel name part>]
         bool quick = false;

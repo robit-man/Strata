@@ -1085,6 +1085,10 @@ def cpu_sockets():
 def two_socket_note(sockets) -> list[str]:
     """Bench #674 #707 (2-socket Xeons: 17-18 workers beat 35 by ~20%): a tip to keep the expert pool on one socket's
     cores, one fewer for the host loop.  Nothing is written to the config."""
+    # Jetson exposes each CPU cluster as a physical package.  Those clusters are not the NUMA-separated x86 sockets
+    # this measured tip is about, so calling them sockets gives the wrong advice.
+    if platform.machine().lower() in ("aarch64", "arm64"):
+        return []
     if not sockets or sockets[0] < 2 or sockets[1] < 3:
         return []
     n = sockets[1] - 1
@@ -1170,12 +1174,13 @@ def cpu_info():
     else:
         try:
             txt = open("/proc/cpuinfo").read()
-            flags = set(re.search(r"^flags\s*:\s*(.*)$", txt, re.M).group(1).split())
+            flags_match = re.search(r"^(?:flags|Features)\s*:\s*(.*)$", txt, re.M | re.I)
+            flags = set(flags_match.group(1).split()) if flags_match else set()
             avx2 = "avx2" in flags
             avx512 = {"avx512f", "avx512bw", "avx512vl", "avx512_vnni", "avx512vbmi"} <= flags
             m = re.search(r"^model name\s*:\s*(.*)$", txt, re.M)
             name = m.group(1) if m else name
-        except OSError:
+        except (OSError, AttributeError):
             pass
     return name, avx2, avx512
 
@@ -1208,6 +1213,8 @@ def cpu_floor(avx2: bool) -> str:
     forced = os.environ.get("STRATA_ISA_FLOOR", "").strip().lower()
     if forced in ("avx", "none"):
         return forced
+    if platform.machine().lower() in ("aarch64", "arm64"):
+        return ""                         # ggml selects its ARM kernels; the x86 ISA floor does not apply
     if avx2:
         return ""
     if WIN:
@@ -1284,6 +1291,58 @@ def _cpuid_avx2() -> bool:
         return False
 
 
+def _cuda_driver_gpus() -> list[dict]:
+    """NVIDIA cards through the stable CUDA driver API.
+
+    Jetson's nvidia-smi reports its name and compute capability but prints N/A
+    for unified memory and driver_version. The CUDA API has the values needed
+    to build for the local device and needs no compiler or Python package.
+    """
+    try:
+        lib = ctypes.CDLL("libcuda.so.1" if os.name != "nt" else "nvcuda.dll")
+        for name in ("cuInit", "cuDeviceGetCount", "cuDeviceGet", "cuDeviceGetName",
+                     "cuDeviceComputeCapability", "cuDriverGetVersion"):
+            getattr(lib, name).restype = ctypes.c_int
+        total_mem = getattr(lib, "cuDeviceTotalMem_v2", None) or getattr(lib, "cuDeviceTotalMem")
+        total_mem.restype = ctypes.c_int
+        if lib.cuInit(0) != 0:
+            return []
+        count = ctypes.c_int()
+        if lib.cuDeviceGetCount(ctypes.byref(count)) != 0:
+            return []
+        driver = ""
+        try:
+            text = Path("/proc/driver/nvidia/version").read_text(encoding="utf-8")
+            match = re.search(r"(?:Kernel Module[^\n]*?|aarch64\s+)(\d+(?:\.\d+)+)", text)
+            driver = match.group(1) if match else ""
+        except OSError:
+            pass
+        if not driver:
+            version = ctypes.c_int()
+            if lib.cuDriverGetVersion(ctypes.byref(version)) == 0:
+                driver = f"{version.value // 1000}.{version.value % 1000 // 10}"
+        jetson = Path("/etc/nv_tegra_release").is_file()
+        found = []
+        for index in range(count.value):
+            device = ctypes.c_int()
+            name = ctypes.create_string_buffer(256)
+            major, minor = ctypes.c_int(), ctypes.c_int()
+            memory = ctypes.c_size_t()
+            if lib.cuDeviceGet(ctypes.byref(device), index) != 0 or \
+               lib.cuDeviceGetName(name, len(name), device) != 0 or \
+               lib.cuDeviceComputeCapability(ctypes.byref(major), ctypes.byref(minor), device) != 0 or \
+               total_mem(ctypes.byref(memory), device) != 0:
+                continue
+            found.append({"index": index, "name": name.value.decode("utf-8", "replace"),
+                          "vram_gb": memory.value / 2 ** 30, "arch": f"{major.value}{minor.value}",
+                          "driver": driver, "jetson": jetson, "uma": jetson,
+                          "dedicated_gb": 0.0 if jetson else memory.value / 2 ** 30,
+                          "shared_gb": memory.value / 2 ** 30 if jetson else 0.0})
+        return found
+    except (AttributeError, OSError, ValueError):
+        return []
+
+
 def gpus():
     """Every NVIDIA GPU, numbered as nvidia-smi numbers them (by PCI bus, the order the engine is told to use)."""
     s = out(["nvidia-smi", "--query-gpu=index,name,memory.total,compute_cap,driver_version",
@@ -1296,7 +1355,7 @@ def gpus():
                           "driver": drv})
         except ValueError:
             continue
-    return found
+    return found or _cuda_driver_gpus()
 
 
 def gpu_drives_display(g) -> bool:
@@ -1877,21 +1936,26 @@ def find_vcvars(cuda_v=None):
     return v if v and v.exists() else None
 
 
-def find_tool(name):
-    """A tool on PATH, or the one pip installed next to this Python (cmake, ninja).  A PATH copy that does not run
-    (a pip launcher whose Python is gone) is skipped for the one next to this Python."""
-    p = shutil.which(name)
-    if p:
+def find_tool(name, minimum=None):
+    """A working tool on PATH, or one pip installed next to this Python (cmake, ninja).
+
+    ``minimum`` is a version tuple.  It lets a local build skip an older system CMake and use the pinned helper in
+    the virtual environment instead.  This matters on Ubuntu 22.04, whose CMake 3.22 is older than Strata's 3.24
+    minimum.  A PATH copy that does not run (a pip launcher whose Python is gone) is skipped too.
+    """
+    candidates = [shutil.which(name)]
+    candidates += [str(d / (name + (".exe" if WIN else ""))) for d in
+                   (Path(sys.executable).parent / "Scripts", Path(sys.executable).parent,
+                    Path.home() / ".local" / "bin")]
+    for p in dict.fromkeys(x for x in candidates if x and Path(x).exists()):
         try:
-            if subprocess.run([p, "--version"], capture_output=True, timeout=30).returncode == 0:
+            found = subprocess.run([p, "--version"], capture_output=True, text=True, timeout=30)
+            version = re.search(r"\d+(?:\.\d+)+", found.stdout + found.stderr)
+            actual = tuple(int(x) for x in version.group().split(".")) if version else ()
+            if found.returncode == 0 and (minimum is None or actual >= tuple(minimum)):
                 return p
         except (OSError, subprocess.SubprocessError):
             pass
-    for d in (Path(sys.executable).parent / "Scripts", Path(sys.executable).parent,
-              Path.home() / ".local" / "bin"):
-        c = d / (name + (".exe" if WIN else ""))
-        if c.exists():
-            return str(c)
     return None
 
 
@@ -4766,10 +4830,12 @@ def cmake_build(src, bdir, target, defs, vcvars, bat_name):
     # The ready-made engine path never calls this function. Keep build helpers out of
     # the normal serving environment, and use already installed tools offline.
     build_packages = requirement_lines(BUILD_REQUIREMENTS) if BUILD_REQUIREMENTS.exists() else BUILD_PACKAGES
-    missing = [package for package in build_packages if find_tool(req_name(package)) is None]
+    # CMakeLists.txt requires 3.24.  Merely finding `cmake` is not enough: Ubuntu 22.04 provides 3.22.
+    missing = [package for package in build_packages
+               if find_tool(req_name(package), (3, 24) if req_name(package) == "cmake" else None) is None]
     if missing:
         pip_install(missing, "CMake and Ninja build tools")
-    cmake, ninja = find_tool("cmake"), find_tool("ninja")
+    cmake, ninja = find_tool("cmake", (3, 24)), find_tool("ninja")
     if cmake is None or ninja is None:
         fail("cmake / ninja not found after installing them", "run: .venv python -m pip install -r requirements-build.txt")
     conf = [cmake, "-G", "Ninja", f"-DCMAKE_MAKE_PROGRAM={ninja}", "-S", str(src), "-B", str(bdir),
@@ -4807,6 +4873,15 @@ def source_hash(parts) -> str:
         for f in [base] if base.is_file() else sorted(x for x in base.rglob("*") if x.is_file()):
             h.update(f.relative_to(ROOT).as_posix().encode() + b"\0" + f.read_bytes().replace(b"\r\n", b"\n"))
     return h.hexdigest()[:16]
+
+
+def iq_pack_command(gguf: Path, pack: Path, family: dict, *, experts: bool = False) -> list[str]:
+    """The packer command for both passes; format compatibility flags must reach the experts-file pass too."""
+    command = [sys.executable, str(ROOT / "tools" / "iq_pack.py"), "--gguf", str(gguf), "--out", str(pack),
+               *family.get("pack_args", [])]
+    if experts:
+        command.append("--experts-bin")
+    return command
 
 
 def isa_floor_defs(floor: str, bdir: Path, meta: dict) -> list:
@@ -6508,6 +6583,8 @@ def engine_step(a, gpu, hip, amd, cuda_tk, vision):
         return control_engine_step(gpu, vision)
     llama = get_llama_cpp()
     ok(f"llama.cpp {LLAMA_CPP_COMMIT[:7]} (gguf-py, ggml, mtmd)")
+    if platform.machine().lower() in ("aarch64", "arm64") and not hip:
+        a.build = True                                  # release CUDA archives are Linux x86-64
     if hip and WIN:                                    # AMD on Windows: the ready-made HIP engine (no compiler)
         eng = None if a.build else get_prebuilt_hip(a.prebuilt, gpu)
         if eng is None:
@@ -7380,8 +7457,13 @@ def main() -> int:
         gpu["archs"] = sorted({x["arch"] for x in chosen})  # the engine needs code for every one of them
         if multi:
             ok("GPUs: " + " + ".join(gpu_name(x) for x in chosen) + " together (the model's layers are split across them)")
-        ok(f"GPU: {gpu['name']}, {gpu['vram_gb']:.1f} GB VRAM, compute capability {cc(gpu)}, driver {gpu['driver']}")
-        cuda_tk, why = cuda_choice(gpu["archs"], a.cuda)   # one engine per model: its oldest card decides
+        gpu_memory = (f"{gpu['vram_gb']:.1f} GB unified memory" if gpu.get("uma") else
+                      f"{gpu['vram_gb']:.1f} GB VRAM")
+        ok(f"GPU: {gpu['name']}, {gpu_memory}, compute capability {cc(gpu)}, driver {gpu['driver']}")
+        if gpu.get("jetson") and a.cuda is None:
+            cuda_tk, why = 12, "Jetson uses its installed JetPack CUDA toolkit and builds the engine locally"
+        else:
+            cuda_tk, why = cuda_choice(gpu["archs"], a.cuda)   # one engine per model: its oldest card decides
         if why:
             (warn if cuda_tk == 13 or str(a.cuda) == "12" else ok)(f"CUDA {cuda_tk}: {why}")
         min_driver = CUDA12_MIN_DRIVER if cuda_tk == 12 else MIN_DRIVER
@@ -7415,7 +7497,8 @@ def main() -> int:
     pf = page_file_gb()
     if pf is not None and pf < 4:
         warn(page_file_advice(pf, page_file_setting()))
-    ok(f"CPU: {cpu} ({'AVX-512' if avx512 else 'AVX2' if avx2 else 'no AVX2'})")
+    arm_host = platform.machine().lower() in ("aarch64", "arm64")
+    ok(f"CPU: {cpu} ({'ARM64' if arm_host else 'AVX-512' if avx512 else 'AVX2' if avx2 else 'no AVX2'})")
     link = None if hip else pcie_link(int(gpu.get("index", 0)))
     if link is not None:
         line, problem = pcie_lines(link)
@@ -7425,7 +7508,7 @@ def main() -> int:
     floor = cpu_floor(avx2)
     if floor == "unsupported":
         fail("this CPU has neither AVX2 nor SSE4.2; Strata needs at least SSE4.2 (Intel Nehalem, 2008, or newer)")
-    if not avx2:
+    if not avx2 and not arm_host:
         # #394 #595 #623: the ready-made engine is AVX2; an older CPU gets one compiled here, whose CPU experts run on
         # ggml-cpu's kernels for this CPU.  Experimental: measured only on newer CPUs with the older path forced, and by
         # users on a few Xeons.  A warning, not a stop.
@@ -7441,10 +7524,11 @@ def main() -> int:
         say()
         any_fits = False
         for m, d in MODELS.items():
-            have_gb = mem_have(m, ram, gpu["vram_gb"])
+            have_gb = mem_have(m, ram, low_ram_vram(gpu))
             verdict = "fits" if have_gb >= d["ram_gb"] else "tight" if have_gb >= d["ram_gb"] - 8 else "does not fit"
             if d.get("mem_total"):          # Gyro: VRAM + RAM together; the rest of the download is read from the SSD
-                verdict += f" ({ram:.0f} GB RAM + {gpu['vram_gb']:.0f} GB VRAM)"
+                verdict += (f" ({have_gb:.0f} GB unified memory)" if gpu.get("uma") else
+                            f" ({ram:.0f} GB RAM + {gpu['vram_gb']:.0f} GB VRAM)")
             if d.get("budget") and not unsloth_budget(m, ram, gpu):     # Phase 2: all of them in RAM
                 verdict = ("EXPERIMENTAL, " if d.get("experimental") else "") + "fits (all of its experts in RAM)"
             elif d.get("budget"):
@@ -7463,7 +7547,7 @@ def main() -> int:
             if hip and d.get("repo"):                  # the ready-made NVFP4 packs: no AMD kernels at all
                 verdict = "NVIDIA only (the AMD engine has no NVFP4 kernels)"
             else:
-                any_fits = any_fits or (not verdict.startswith("does not fit") and not d.get("mem_total"))
+                any_fits = any_fits or not verdict.startswith("does not fit")
             say(f"  {m:8s} needs ~{d['ram_gb']} GB {'of VRAM + RAM' if d.get('mem_total') else 'RAM'}: {verdict}")
         if not any_fits:
             # #977: every size says "does not fit", so the verdict says so too (and the exit code, for scripts). It only
@@ -7525,7 +7609,7 @@ def main() -> int:
         d = MODELS[m]
         fit = "" if ram >= d["ram_gb"] else f"   <- needs {d['ram_gb']} GB RAM, you have {ram:.0f}"
         if d.get("mem_total"):             # Gyro: the download includes the n-gram table, the memory figure does not
-            have_gb = mem_have(m, ram, gpu["vram_gb"])
+            have_gb = mem_have(m, ram, low_ram_vram(gpu))
             fit = "" if have_gb >= d["ram_gb"] else \
                 f"   <- needs {d['ram_gb']} GB of VRAM + RAM together, you have {have_gb:.0f}"
             say(f"  {i}) {m}{size_tag(family, m, installed)} {d['about']}; download {d['download_gb']:.1f} GB "
@@ -7596,9 +7680,10 @@ def main() -> int:
     # (the low-RAM mode's variant is decided once the context is known, below; on several GPUs it is the mapped one
     # before RESIDENT_SPLIT_ENGINE, #642)
     if MODELS[model].get("mem_total"):
-        if mem_have(model, ram, gpu["vram_gb"]) < MODELS[model]["ram_gb"]:   # recommend, never force: a warning
+        if mem_have(model, ram, low_ram_vram(gpu)) < MODELS[model]["ram_gb"]:   # recommend, never force: a warning
             warn(f"{model} needs {MODELS[model]['ram_gb']} GB of VRAM and RAM together; this PC has "
-                 f"{mem_have(model, ram, gpu['vram_gb']):.0f} GB ({ram:.0f} GB RAM + {gpu['vram_gb']:.0f} GB VRAM): it "
+                 f"{mem_have(model, ram, low_ram_vram(gpu)):.0f} GB ({ram:.0f} GB RAM + "
+                 f"{low_ram_vram(gpu):.0f} GB separate VRAM): it "
                  "may be slow, run out of memory or not start")
     elif not low_ram and budget is None and ram < MODELS[model]["ram_gb"] - 4:
         confirm_paging(model, ram, a.low_ram, a.yes, bool(a.model))
@@ -7918,12 +8003,10 @@ def main() -> int:
     elif not (pack / "native_experts.txt").exists() or not (pack / "tokenizer" / "vocab.json").exists():
         # every tensor as the GGUF stores it; the experts are read from the GGUF at start (seconds to build)
         # (UD-Q4_K_XL: --compat-bf16 - its Q8_0 hyper-connection projections become BF16, the form the engine reads)
-        run([sys.executable, str(ROOT / "tools" / "iq_pack.py"), "--gguf", str(shards[0]), "--out", str(pack),
-             *fam.get("pack_args", [])], env=env)
+        run(iq_pack_command(shards[0], pack, fam), env=env)
     if low_ram and not ready and not (pack / "experts.bin").exists():
         say(f"  Writing the experts into one file for the low-RAM mode (one time, {MODELS[model]['arena_gb']:.0f} GB) ...")
-        run([sys.executable, str(ROOT / "tools" / "iq_pack.py"), "--gguf", str(shards[0]), "--out", str(pack),
-             "--experts-bin"], env=env)
+        run(iq_pack_command(shards[0], pack, fam, experts=True), env=env)
     ok(f"model prepared: {pack}")
     mtp = ready_paths(model, models_dir)["mtp"] if prepared else \
         (find_in(roots, "mtp/rt/experts.bin") or data / "mtp/rt/experts.bin").parent.parent
